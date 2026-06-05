@@ -1,35 +1,25 @@
-# Wordbee Name Streamlit Tool
+# Wordbee Name Generator
 
-A Streamlit app that generates:
+Streamlit tool for pasted AEM rows.
 
-1. **Wordbee Name**
-2. **AEM Name** for Marketing requests only
-3. **AEM URL** for each AEM Name
+## Workflow
+1. Copy one or more rows from AEM.
+2. Paste the copied text into the big text box.
+3. Select Marketing, Product, or both.
+4. Select one or more countries when Marketing is enabled.
 
-## Naming rules
-
-### Wordbee Name
-`GTSID_Web_FirstInitialLastName_Title_System`
-
-- Marketing system suffix: `AEM`
-- Product system suffix: `IRIS`
-- If both Marketing and Product are selected, both Wordbee names are generated.
-
-### AEM Name
-`GTSID_Web_FirstInitialLastName_Title_COUNTRY`
-
-Only generated when Marketing is selected.
-
-### URL
-The AEM URL uses the lowercase version of the AEM Name, keeps underscores, converts spaces to hyphens, removes unsafe characters, and appends it to the Thermo Fisher projects URL.
+## Outputs
+- Wordbee Name
+- AEM Name for each selected country when Marketing is selected
+- AEM URL for each generated AEM Name
 
 ## Run locally
-
 ```bash
 pip install -r requirements.txt
 streamlit run app.py
 ```
 
-## Reset behavior
-
-The **Reset / Refresh** button clears the session and triggers a hard browser refresh.
+## Notes
+- The parser is designed for pasted AEM selections with tabs, wrapped lines, or multiple rows.
+- Product-only requests skip AEM Name generation.
+- The Reset / Refresh button performs a full page reload.
