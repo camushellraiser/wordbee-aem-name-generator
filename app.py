@@ -2,412 +2,177 @@ from __future__ import annotations
 
 import html
 import json
-from typing import List, Sequence, Tuple
+from typing import List, Tuple
 
 import streamlit as st
 import streamlit.components.v1 as components
 
-from core import build_aem_name, build_aem_url, build_wordbee_name, parse_projects
+from core import build_aem_name, build_aem_url, build_wordbee_name, parse_record, split_records
 
 COUNTRIES: List[Tuple[str, str, str]] = [
-    ("🇩🇪", "de-DE", "DE"),
-    ("🇪🇸", "es-ES", "ES"),
-    ("🇫🇷", "fr-FR", "FR"),
-    ("🇯🇵", "ja-JP", "JP"),
-    ("🇰🇷", "ko-KR", "KR"),
-    ("🇨🇳", "zh-CN", "CN"),
-    ("🇧🇷", "pt-BR", "BR"),
-    ("🇹🇼", "zh-TW", "TW"),
+    ('🇩🇪', 'de-DE', 'DE'),
+    ('🇪🇸', 'es-ES', 'ES'),
+    ('🇫🇷', 'fr-FR', 'FR'),
+    ('🇯🇵', 'ja-JP', 'JP'),
+    ('🇰🇷', 'ko-KR', 'KR'),
+    ('🇨🇳', 'zh-CN', 'CN'),
+    ('🇧🇷', 'pt-BR', 'BR'),
+    ('🇹🇼', 'zh-TW', 'TW'),
 ]
-COUNTRY_LABEL_TO_SUFFIX = {f"{flag} {code}": suffix for flag, code, suffix in COUNTRIES}
+COUNTRY_TO_SUFFIX = {f'{flag} {code}': suffix for flag, code, suffix in COUNTRIES}
 
-st.set_page_config(
-    page_title="Wordbee Name",
-    page_icon="🏷️",
-    layout="wide",
-    initial_sidebar_state="collapsed",
-)
+st.set_page_config(page_title='Wordbee Name', page_icon='🏷️', layout='wide', initial_sidebar_state='collapsed')
 
 
 def hard_refresh() -> None:
     st.session_state.clear()
-    st.session_state["__refresh__"] = True
     st.rerun()
 
 
 def style() -> None:
     st.markdown(
-        """
+        '''
         <style>
-            .stApp {
-                background:
-                    radial-gradient(circle at top left, rgba(99,102,241,0.16), transparent 26%),
-                    radial-gradient(circle at top right, rgba(16,185,129,0.14), transparent 24%),
-                    linear-gradient(180deg, #f7fbff 0%, #f3f6fb 100%);
-            }
+            .stApp { background: linear-gradient(180deg, #f7fbff 0%, #eef4fb 100%); }
             [data-testid="stHeader"] { background: transparent; }
             .hero {
-                padding: 1.3rem 1.4rem 1rem 1.4rem;
+                padding: 1.25rem 1.35rem;
+                border-radius: 24px;
+                background: rgba(255,255,255,0.92);
                 border: 1px solid rgba(148,163,184,0.25);
-                border-radius: 26px;
-                background: rgba(255,255,255,0.84);
-                box-shadow: 0 18px 60px rgba(15, 23, 42, 0.08);
-                backdrop-filter: blur(12px);
+                box-shadow: 0 16px 48px rgba(15,23,42,0.08);
                 margin-bottom: 1rem;
             }
-            .hero h1 {
-                margin: 0;
-                font-size: 2.15rem;
-                line-height: 1.05;
-                font-weight: 900;
-                color: #0f172a;
-            }
-            .hero p {
-                margin: 0.5rem 0 0 0;
-                color: #475569;
-                font-size: 1rem;
-            }
-            .pill-row { display:flex; flex-wrap:wrap; gap:0.45rem; margin-top:0.85rem; }
-            .pill {
-                display:inline-flex; align-items:center; gap:0.4rem;
-                padding:0.35rem 0.72rem; border-radius:999px;
-                background:#eef2ff; border:1px solid #c7d2fe;
-                color:#3730a3; font-size:0.88rem; font-weight:700;
-            }
-            .section-card {
-                padding: 1rem 1rem 0.95rem 1rem;
-                border-radius: 22px;
-                border: 1px solid rgba(148,163,184,0.24);
-                background: rgba(255,255,255,0.92);
-                box-shadow: 0 12px 30px rgba(15, 23, 42, 0.06);
-                margin-bottom: 0.9rem;
-            }
-            .section-title {
-                display:flex; align-items:center; gap:0.55rem;
-                font-size: 1.06rem; font-weight: 900; margin-bottom: 0.55rem; color: #0f172a;
-            }
-            .helper { color:#64748b; font-size:0.94rem; margin-top:-0.15rem; margin-bottom:0.7rem; }
-            .copy-wrap {
-                padding: 0.95rem; border-radius: 16px; border: 1px solid rgba(148,163,184,0.22);
-                background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%); margin: 0.7rem 0;
-            }
-            .copy-label {
-                font-size: 0.8rem; letter-spacing: 0.06em; text-transform: uppercase;
-                color: #64748b; margin-bottom: 0.42rem; font-weight: 800;
-            }
-            .copy-value {
-                font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-                font-size: 0.95rem; word-break: break-word; padding: 0.78rem 0.85rem;
-                background: #0f172a; color: #e2e8f0; border-radius: 12px; margin-bottom: 0.55rem; white-space: pre-wrap;
-            }
-            .copy-btn {
-                appearance: none; border: none; border-radius: 999px;
-                background: linear-gradient(90deg, #2563eb 0%, #4f46e5 100%);
-                color: white; padding: 0.6rem 0.95rem; font-weight: 800; cursor: pointer;
-                box-shadow: 0 10px 20px rgba(37, 99, 235, 0.18);
-            }
-            .copy-btn.secondary { background: linear-gradient(90deg, #0f766e 0%, #059669 100%); }
-            .chip-row { display:flex; flex-wrap:wrap; gap:0.35rem; margin: 0.35rem 0 0.15rem 0; }
-            .chip {
-                display:inline-flex; align-items:center; gap:0.35rem; border-radius:999px;
-                padding:0.3rem 0.65rem; border:1px solid #dbe4f0; background:#f8fbff;
-                color:#334155; font-size:0.82rem; font-weight:700;
-            }
-            .muted-box {
-                padding: 1rem 1rem; border-radius: 16px; border: 1px dashed #cbd5e1;
-                background: rgba(255,255,255,0.72); color: #475569;
-            }
-            .record-card {
-                border-radius: 18px; border: 1px solid rgba(148,163,184,0.25);
-                background: rgba(255,255,255,0.88); box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
-                padding: 0.9rem 0.95rem; margin-bottom: 0.9rem;
-            }
-            .record-title {
-                display:flex; flex-wrap:wrap; align-items:center; gap:0.5rem;
-                margin-bottom:0.2rem; font-weight:800; color:#0f172a;
-            }
-            div[data-testid="stButton"] > button {
-                border-radius: 999px; font-weight: 800; padding: 0.55rem 0.9rem;
-            }
-            div[data-testid="stTextArea"] textarea {
-                min-height: 300px !important;
-                font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-                font-size: 0.94rem;
-            }
-            div[data-testid="stTextInput"] input {
-                font-size: 1rem;
-                font-weight: 700;
-            }
+            .hero h1 { margin: 0; font-size: 2rem; font-weight: 900; }
+            .hero p { margin: .45rem 0 0 0; color: #475569; }
+            .section { padding: 1rem; border-radius: 20px; background: rgba(255,255,255,.95); border: 1px solid rgba(148,163,184,.22); margin-bottom: .9rem; }
+            .section-title { font-size: 1.02rem; font-weight: 900; margin-bottom: .5rem; }
+            .helper { color: #64748b; margin-bottom: .75rem; }
+            .card { padding: .9rem; border-radius: 16px; background: #fff; border: 1px solid #dbe4f0; margin: .65rem 0; }
+            .label { font-size: .78rem; text-transform: uppercase; color: #64748b; font-weight: 800; margin-bottom: .35rem; }
+            .value { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; white-space: pre-wrap; word-break: break-word; background: #0f172a; color: #e2e8f0; padding: .75rem .85rem; border-radius: 12px; }
+            .copy-btn { margin-top: .5rem; border: none; border-radius: 999px; padding: .5rem .85rem; font-weight: 800; background: linear-gradient(90deg, #2563eb, #4f46e5); color: white; cursor: pointer; }
+            .copy-btn.secondary { background: linear-gradient(90deg, #0f766e, #059669); }
+            div[data-testid="stTextArea"] textarea { min-height: 220px !important; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+            div[data-testid="stButton"] > button { border-radius: 999px; font-weight: 800; }
         </style>
-        """,
-        unsafe_allow_html=True,
+        ''', unsafe_allow_html=True,
     )
 
 
 def copy_card(label: str, value: str, secondary: bool = False) -> None:
+    safe_value = json.dumps(value)
     label_html = html.escape(label)
     value_html = html.escape(value)
-    value_safe = json.dumps(value)
-    secondary_class = " secondary" if secondary else ""
+    secondary_class = ' secondary' if secondary else ''
     components.html(
-        f"""
-        <div class="copy-wrap">
-          <div class="copy-label">{label_html}</div>
-          <div class="copy-value">{value_html}</div>
-          <button class="copy-btn{secondary_class}" onclick="navigator.clipboard.writeText({value_safe}).then(() => this.innerText='Copied!');">
-            Copy
-          </button>
+        f'''
+        <div class="card">
+          <div class="label">{label_html}</div>
+          <div class="value">{value_html}</div>
+          <button class="copy-btn{secondary_class}" onclick="navigator.clipboard.writeText({safe_value}).then(()=>this.textContent='Copied!');">Copy</button>
         </div>
-        """,
-        height=175,
+        ''',
+        height=190,
     )
-
-
-def copy_all_card(label: str, values: Sequence[str]) -> None:
-    joined = "\n".join(values)
-    label_html = html.escape(label)
-    joined_html = html.escape(joined)
-    values_safe = json.dumps(joined)
-    components.html(
-        f"""
-        <div class="copy-wrap">
-          <div class="copy-label">{label_html}</div>
-          <div class="copy-value" style="white-space:pre-wrap;">{joined_html}</div>
-          <button class="copy-btn secondary" onclick="navigator.clipboard.writeText({values_safe}).then(() => this.innerText='Copied all!');">
-            Copy all
-          </button>
-        </div>
-        """,
-        height=max(170, 120 + 28 * max(1, len(values))),
-    )
-
-
-def render_flags(selected_labels: Sequence[str]) -> str:
-    return " ".join(selected_labels)
 
 
 def main() -> None:
     style()
 
-    if st.session_state.get("__refresh__"):
-        st.session_state["__refresh__"] = False
-        components.html("<script>window.top.location.reload();</script>", height=0)
-        st.stop()
-
     st.markdown(
-        """
+        '''
         <div class="hero">
             <h1>🏷️ Wordbee Name</h1>
-            <p>Paste copied AEM rows, enter the GTS ID once, then generate Wordbee names, AEM names, and AEM URLs in one clean Streamlit workflow.</p>
-            <div class="pill-row">
-                <span class="pill">Paste copied AEM rows</span>
-                <span class="pill">GTS ID field</span>
-                <span class="pill">Marketing → AEM + URLs</span>
-                <span class="pill">Product → Wordbee only</span>
-                <span class="pill">Hard refresh reset</span>
-            </div>
+            <p>Paste copied AEM row(s), enter the GTS ID, then generate Wordbee names, AEM names, and URLs.</p>
         </div>
-        """,
+        ''',
         unsafe_allow_html=True,
     )
 
-    _, top_right = st.columns([0.82, 0.18], vertical_alignment="center")
-    with top_right:
-        if st.button("Reset / Refresh", use_container_width=True):
+    left, right = st.columns([0.78, 0.22], vertical_alignment='center')
+    with right:
+        if st.button('Reset / Refresh', use_container_width=True):
             hard_refresh()
 
-    st.markdown('<div class="section-card">', unsafe_allow_html=True)
-    st.markdown('<div class="section-title">1. Paste copied AEM row(s)</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="helper">Copy the whole selected row or rows from AEM and paste here. Tabs, wrapped lines, or multiple selected rows are all supported.</div>',
-        unsafe_allow_html=True,
-    )
+    with st.form('generator_form'):
+        st.markdown('<div class="section">', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">1. Paste copied AEM row(s)</div>', unsafe_allow_html=True)
+        st.markdown('<div class="helper">Paste the copied text from AEM. Tabs, wrapped lines, and multiple rows are supported.</div>', unsafe_allow_html=True)
+        pasted_text = st.text_area('Paste copied AEM content', label_visibility='collapsed', placeholder='Paste AEM text here...')
 
-    pasted_text = st.text_area(
-        "Paste copied AEM content",
-        placeholder=(
-            "Example copied from AEM:\n"
-            "Rainbow NPI_AEM_PDP\t230815\tView document(s)\tCorporation Thermo Fisher\tIvy Cao\n"
-            "VDS-Avizo-Geology\t229137\tView document(s)\tCorporation Thermo Fisher\tPratyusha Mantha"
-        ),
-        label_visibility="collapsed",
-        height=300,
-        key="pasted_text",
-    )
-    st.markdown('</div>', unsafe_allow_html=True)
+        gtsid = st.text_input('GTS ID', placeholder='GTS260059')
+        request_types = st.multiselect('Request type', ['Marketing', 'Product'], default=['Marketing', 'Product'])
+        marketing_selected = 'Marketing' in request_types
+        product_selected = 'Product' in request_types
+        country_labels: List[str] = []
+        if marketing_selected:
+            country_labels = st.multiselect('AEM countries', [f'{flag} {code}' for flag, code, _ in COUNTRIES])
 
-    st.markdown('<div class="section-card">', unsafe_allow_html=True)
-    st.markdown('<div class="section-title">2. Input details</div>', unsafe_allow_html=True)
-    gts_id = st.text_input(
-        "GTS ID",
-        placeholder="GTS260059",
-        help="Enter the GTS number used in the generated names.",
-    )
-
-    request_types = st.multiselect(
-        "Request type",
-        options=["Marketing", "Product"],
-        default=["Marketing"],
-        help="Select one or both. Marketing enables country-based AEM outputs; Product generates Wordbee names only.",
-    )
-
-    marketing_selected = "Marketing" in request_types
-    product_selected = "Product" in request_types
-
-    country_labels: List[str] = []
-    if marketing_selected:
-        st.markdown(
-            '<div class="helper">Choose one or more countries. Each selected country creates a separate AEM Name and AEM URL.</div>',
-            unsafe_allow_html=True,
-        )
-        country_labels = st.multiselect(
-            "AEM countries",
-            options=[f"{flag} {code}" for flag, code, _ in COUNTRIES],
-            default=[],
-            help="Multi-select supported.",
-        )
-
-    generate = st.button("Generate", type="primary", use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+        generate = st.form_submit_button('Generate', use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
     if not generate:
-        st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        st.markdown('<div class="section-title">3. Ready to generate</div>', unsafe_allow_html=True)
-        st.markdown(
-            '<div class="muted-box">Paste a copied AEM row, enter the GTS ID, choose Marketing and/or Product, then click Generate.</div>',
-            unsafe_allow_html=True,
-        )
-        st.markdown('</div>', unsafe_allow_html=True)
         return
 
-    if not gts_id.strip():
-        st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        st.markdown('<div class="section-title">3. Missing GTS ID</div>', unsafe_allow_html=True)
-        st.warning("Please enter a GTS ID before generating names.")
-        st.markdown('</div>', unsafe_allow_html=True)
+    if not gtsid.strip():
+        st.error('GTS ID is required.')
         return
-
-    parsed_projects = parse_projects(pasted_text, gts_id)
-
     if not pasted_text.strip():
-        st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        st.markdown('<div class="section-title">3. Empty paste box</div>', unsafe_allow_html=True)
-        st.warning("Paste one or more copied AEM rows into the box above.")
-        st.markdown('</div>', unsafe_allow_html=True)
+        st.error('Paste copied AEM row(s) first.')
         return
 
-    if not parsed_projects:
-        st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        st.markdown('<div class="section-title">3. Could not parse the pasted rows</div>', unsafe_allow_html=True)
-        st.warning(
-            "I could not read a title and owner from the pasted text. Paste the copied AEM row that contains the project title and the person's name."
-        )
-        st.markdown('</div>', unsafe_allow_html=True)
-        return
+    records = split_records(pasted_text)
+    parsed = [parse_record(r) for r in records]
 
-    st.markdown('<div class="section-card">', unsafe_allow_html=True)
-    st.markdown('<div class="section-title">3. Parsed entries</div>', unsafe_allow_html=True)
-    st.markdown(
-        f'<div class="helper">Detected {len(parsed_projects)} entr' + ("ies" if len(parsed_projects) != 1 else "y") + ' from your paste.</div>',
-        unsafe_allow_html=True,
-    )
-    for idx, project in enumerate(parsed_projects, start=1):
-        with st.expander(f"Entry {idx}: {project.title_raw}", expanded=(len(parsed_projects) == 1)):
-            st.markdown(
-                f"""
-                <div class="chip-row">
-                    <span class="chip">GTS ID: {html.escape(project.gtsid)}</span>
-                    <span class="chip">Owner token: {html.escape(project.owner_token)}</span>
-                    <span class="chip">Title: {html.escape(project.title_raw)}</span>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-            copy_card("Detected title", project.title_raw, secondary=True)
+    st.markdown('<div class="section">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">2. Parsed entries</div>', unsafe_allow_html=True)
+    for idx, item in enumerate(parsed, start=1):
+        st.markdown(f'<div class="helper"><b>Entry {idx}:</b> {html.escape(item.title_raw)}</div>', unsafe_allow_html=True)
+        if item.reference:
+            st.caption(item.reference)
+        st.caption(f'Owner detected: {item.owner_name}')
     st.markdown('</div>', unsafe_allow_html=True)
 
-    st.markdown('<div class="section-card">', unsafe_allow_html=True)
-    st.markdown('<div class="section-title">4. Wordbee Name</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="helper">Marketing generates the AEM-suffixed Wordbee Name. Product generates the IRIS-suffixed Wordbee Name. If both are selected, both versions are shown.</div>',
-        unsafe_allow_html=True,
-    )
-
-    all_wordbee_names: List[str] = []
-    for idx, project in enumerate(parsed_projects, start=1):
-        st.markdown(
-            f'<div class="record-card"><div class="record-title">Entry {idx}: {html.escape(project.title_raw)}</div>',
-            unsafe_allow_html=True,
-        )
+    st.markdown('<div class="section">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">3. Wordbee Name</div>', unsafe_allow_html=True)
+    all_wordbee: List[str] = []
+    for item in parsed:
         if marketing_selected:
-            marketing_name = build_wordbee_name(project.gtsid, project.owner_token, project.title_raw, "AEM")
-            all_wordbee_names.append(marketing_name)
-            copy_card(f"Wordbee Name — Marketing #{idx}", marketing_name)
+            wb = build_wordbee_name(gtsid, item.owner_name, item.title_raw, 'AEM')
+            all_wordbee.append(wb)
+            copy_card(f'Wordbee Name — {item.title_raw} (Marketing)', wb)
         if product_selected:
-            product_name = build_wordbee_name(project.gtsid, project.owner_token, project.title_raw, "IRIS")
-            all_wordbee_names.append(product_name)
-            copy_card(f"Wordbee Name — Product #{idx}", product_name)
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    if all_wordbee_names:
-        copy_all_card("Copy all Wordbee names", all_wordbee_names)
+            wb = build_wordbee_name(gtsid, item.owner_name, item.title_raw, 'IRIS')
+            all_wordbee.append(wb)
+            copy_card(f'Wordbee Name — {item.title_raw} (Product)', wb)
+    if all_wordbee:
+        copy_card('Copy all Wordbee names', '\n'.join(all_wordbee), secondary=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
     if marketing_selected:
-        st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        st.markdown('<div class="section-title">5. AEM Name</div>', unsafe_allow_html=True)
-        if country_labels:
-            st.markdown(
-                f'<div class="helper">Countries selected: {render_flags(country_labels)}</div>',
-                unsafe_allow_html=True,
-            )
-            all_aem_names: List[str] = []
-            all_aem_urls: List[str] = []
-
-            for idx, project in enumerate(parsed_projects, start=1):
-                with st.expander(f"Generate AEM outputs for entry {idx}", expanded=(len(parsed_projects) == 1)):
-                    st.markdown(
-                        f'<div class="record-card"><div class="record-title">Entry {idx}: {html.escape(project.title_raw)}</div>',
-                        unsafe_allow_html=True,
-                    )
-                    per_entry_names: List[str] = []
-                    per_entry_urls: List[str] = []
-                    for label in country_labels:
-                        suffix = COUNTRY_LABEL_TO_SUFFIX[label]
-                        aem_name = build_aem_name(project.gtsid, project.owner_token, project.title_raw, suffix)
-                        aem_url = build_aem_url(aem_name)
-                        per_entry_names.append(aem_name)
-                        per_entry_urls.append(aem_url)
-                        all_aem_names.append(aem_name)
-                        all_aem_urls.append(aem_url)
-
-                        st.markdown(f'<div class="chip-row"><span class="chip">{html.escape(label)}</span></div>', unsafe_allow_html=True)
-                        copy_card(f"AEM Name — {label}", aem_name, secondary=True)
-                        copy_card(f"AEM URL — {label}", aem_url)
-
-                    if len(country_labels) > 1:
-                        copy_all_card(f"Copy all AEM names for entry {idx}", per_entry_names)
-                        copy_all_card(f"Copy all AEM URLs for entry {idx}", per_entry_urls)
-                    st.markdown('</div>', unsafe_allow_html=True)
-
-            if len(all_aem_names) > 1:
-                copy_all_card("Copy all AEM names", all_aem_names)
-                copy_all_card("Copy all AEM URLs", all_aem_urls)
+        st.markdown('<div class="section">', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">4. AEM Name + URL</div>', unsafe_allow_html=True)
+        if not country_labels:
+            st.info('Select one or more countries to generate AEM Names and URLs.')
         else:
-            st.markdown(
-                '<div class="muted-box">Select one or more countries to generate AEM Names and AEM URLs.</div>',
-                unsafe_allow_html=True,
-            )
-        st.markdown('</div>', unsafe_allow_html=True)
-    elif product_selected:
-        st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        st.markdown('<div class="section-title">5. AEM Name</div>', unsafe_allow_html=True)
-        st.markdown(
-            '<div class="muted-box">Product-only requests do not generate AEM Names or AEM URLs.</div>',
-            unsafe_allow_html=True,
-        )
+            all_names: List[str] = []
+            all_urls: List[str] = []
+            for item in parsed:
+                for label in country_labels:
+                    suffix = COUNTRY_TO_SUFFIX[label]
+                    aem_name = build_aem_name(gtsid, item.owner_name, item.title_raw, suffix)
+                    aem_url = build_aem_url(aem_name)
+                    all_names.append(aem_name)
+                    all_urls.append(aem_url)
+                    st.markdown(f'**{label}**', unsafe_allow_html=False)
+                    copy_card('AEM Name', aem_name, secondary=True)
+                    copy_card('AEM URL', aem_url)
+            if len(all_names) > 1:
+                copy_card('Copy all AEM names', '\n'.join(all_names), secondary=True)
+                copy_card('Copy all AEM URLs', '\n'.join(all_urls))
         st.markdown('</div>', unsafe_allow_html=True)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

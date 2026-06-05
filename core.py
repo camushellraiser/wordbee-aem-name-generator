@@ -2,253 +2,141 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import List, Optional, Sequence, Tuple
+from typing import List, Optional
 
 BASE_URL = (
-    "https://author-prod-use1.aemprod.thermofisher.net/"
-    "projects/details.html/content/projects/"
+    'https://author-prod-use1.aemprod.thermofisher.net/'
+    'projects/details.html/content/projects/'
 )
 
-SPLIT_RE = re.compile(r"\t+|\s{2,}|\s*\|\s*")
+REFERENCE_RE = re.compile(
+    r'(?P<gtsid>GTS\d+)_Web_(?P<owner_token>[A-Za-z][A-Za-z0-9]+)_(?P<title>.+?)_(?P<system>AEM|IRIS)(?P<extras>(?:_[A-Za-z0-9-]+)*)',
+    re.IGNORECASE,
+)
 
-GENERIC_TOKENS = {
-    "view",
-    "document",
-    "documents",
-    "document(s)",
-    "corporation",
-    "thermo",
-    "fisher",
-    "thermo fisher",
-    "thermo fisher inc",
-    "thermo fisher scientific",
-    "n/a",
-    "na",
-}
+ORDER_RE = re.compile(r'\b\d{5,}\b')
 
 
 @dataclass(frozen=True)
-class ParsedProject:
-    reference: str
-    gtsid: str
-    owner_token: str
+class ParsedRecord:
+    raw_text: str
+    reference: Optional[str]
     title_raw: str
-    source_system: str = "AEM"
-    source_row: str = ""
+    owner_name: str
+
+
+def normalize_owner_token(owner_name: str) -> str:
+    parts = [p for p in re.split(r'\s+', owner_name.strip()) if p]
+    if not parts:
+        raise ValueError('Owner name is required.')
+    first = re.sub(r'[^A-Za-z0-9]', '', parts[0])
+    last = re.sub(r'[^A-Za-z0-9]', '', parts[-1])
+    if not first or not last:
+        raise ValueError('Owner name could not be parsed.')
+    return first[0].upper() + last
 
 
 def normalize_title_for_output(title: str) -> str:
     title = title.strip()
-    title = re.sub(r"\s+", "-", title)
-    title = re.sub(r"[^A-Za-z0-9_-]", "", title)
-    title = re.sub(r"-{2,}", "-", title)
-    title = re.sub(r"_{2,}", "_", title)
-    return title.strip("-_")
+    title = re.sub(r'\s+', '-', title)
+    title = re.sub(r'[^A-Za-z0-9_-]', '', title)
+    title = re.sub(r'-{2,}', '-', title)
+    title = re.sub(r'_{2,}', '_', title)
+    return title.strip('-_')
 
 
 def slugify_for_url(value: str) -> str:
     slug = value.strip().lower()
-    slug = re.sub(r"\s+", "-", slug)
-    slug = re.sub(r"[^a-z0-9_-]", "", slug)
-    slug = re.sub(r"-{2,}", "-", slug)
-    slug = re.sub(r"_{2,}", "_", slug)
-    return slug.strip("-_")
+    slug = re.sub(r'\s+', '-', slug)
+    slug = re.sub(r'[^a-z0-9_-]', '', slug)
+    slug = re.sub(r'-{2,}', '-', slug)
+    slug = re.sub(r'_{2,}', '_', slug)
+    return slug.strip('-_')
 
 
-def derive_owner_token(owner_name: str) -> str:
-    """Convert a visible owner name into the Wordbee token.
-
-    Examples:
-      Pratyusha Mantha -> PMantha
-      Ivy Cao -> ICao
-    """
-    tokens = re.findall(r"[A-Za-z]+", owner_name)
-    if len(tokens) >= 2:
-        first = tokens[-2]
-        last = tokens[-1]
-    elif len(tokens) == 1:
-        first = tokens[0]
-        last = ""
-    else:
-        raise ValueError("Could not derive owner token from the pasted text.")
-
-    first_initial = first[0].upper()
-    remainder = last[:1].upper() + last[1:] if last else ""
-    return f"{first_initial}{remainder}"
+def build_wordbee_name(gtsid: str, owner_name: str, title: str, system: str) -> str:
+    return f'{gtsid.strip()}_Web_{normalize_owner_token(owner_name)}_{normalize_title_for_output(title)}_{system}'
 
 
-def normalize_owner_token(owner_token: str) -> str:
-    cleaned = re.sub(r"[^A-Za-z0-9]", "", owner_token.strip())
-    if not cleaned:
-        raise ValueError("Owner token could not be parsed.")
-    return cleaned[0].upper() + cleaned[1:]
-
-
-def build_wordbee_name(gtsid: str, owner_token: str, title: str, system: str) -> str:
-    title_part = normalize_title_for_output(title)
-    return f"{gtsid.strip()}_Web_{normalize_owner_token(owner_token)}_{title_part}_{system}"
-
-
-def build_aem_name(gtsid: str, owner_token: str, title: str, country_suffix: str) -> str:
-    title_part = normalize_title_for_output(title)
-    return f"{gtsid.strip()}_Web_{normalize_owner_token(owner_token)}_{title_part}_{country_suffix}"
+def build_aem_name(gtsid: str, owner_name: str, title: str, country_suffix: str) -> str:
+    return f'{gtsid.strip()}_Web_{normalize_owner_token(owner_name)}_{normalize_title_for_output(title)}_{country_suffix}'
 
 
 def build_aem_url(aem_name: str) -> str:
-    return f"{BASE_URL}{slugify_for_url(aem_name)}"
+    return f'{BASE_URL}{slugify_for_url(aem_name)}'
 
 
-def _split_row(row: str) -> List[str]:
-    return [piece.strip() for piece in SPLIT_RE.split(row) if piece.strip()]
-
-
-def _clean_cell(cell: str) -> str:
-    cell = re.sub(r"\s+", " ", cell).strip()
-    return cell
-
-
-def _looks_like_person_name(text: str) -> bool:
-    text = _clean_cell(text)
-    if not text:
-        return False
-    lower = text.lower()
-    if lower in GENERIC_TOKENS:
-        return False
-    if any(token in lower for token in ["thermo fisher", "view document", "order id", "reference"]):
-        return False
-    parts = re.findall(r"[A-Za-z]+", text)
-    return len(parts) >= 2 and len(parts) <= 4
-
-
-def _guess_title_from_cells(cells: Sequence[str]) -> str:
-    for cell in cells:
-        cleaned = _clean_cell(cell)
-        if not cleaned:
-            continue
-        lower = cleaned.lower()
-        if lower in GENERIC_TOKENS:
-            continue
-        if lower.startswith("view document"):
-            continue
-        if lower.startswith("corporation"):
-            continue
-        if lower.startswith("thermo fisher"):
-            continue
-        if re.fullmatch(r"\d+", cleaned):
-            continue
-        return cleaned
-    return _clean_cell(cells[0]) if cells else ""
-
-
-def _guess_owner_name_from_row(row: str, cells: Sequence[str]) -> Optional[str]:
-    candidates = [
-        _clean_cell(cell)
-        for cell in cells
-        if _looks_like_person_name(cell)
-    ]
-    if candidates:
-        return candidates[-1]
-
-    # Try the end of the row; this works well when the company name is followed by the person name.
-    trailing_patterns = [
-        r"([A-Z][a-z]+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s*$",
-        r"([A-Z][A-Za-z'-]+\s+[A-Z][A-Za-z'-]+(?:\s+[A-Z][A-Za-z'-]+)?)\s*$",
-    ]
-    for pattern in trailing_patterns:
-        matches = re.findall(pattern, row)
-        if matches:
-            return _clean_cell(matches[-1])
-
-    tokens = re.findall(r"[A-Za-z]+", row)
-    if len(tokens) >= 2:
-        return f"{tokens[-2]} {tokens[-1]}"
-    return None
-
-
-def _split_into_rows(pasted_text: str) -> List[str]:
-    text = pasted_text.replace("\r\n", "\n").replace("\r", "\n").strip()
+def split_records(pasted_text: str) -> List[str]:
+    text = (pasted_text or '').replace('\r\n', '\n').replace('\r', '\n').strip()
     if not text:
         return []
 
-    raw_lines = [line.rstrip() for line in text.split("\n")]
-    rows: List[str] = []
-    buffer: List[str] = []
+    blocks = [b.strip() for b in re.split(r'\n\s*\n+', text) if b.strip()]
+    if len(blocks) > 1:
+        return blocks
 
-    for line in raw_lines:
-        stripped = line.strip()
-        if not stripped:
-            if buffer:
-                rows.append(" ".join(buffer).strip())
-                buffer = []
-            continue
-        # Keep likely wrapped lines together.
-        if buffer and _looks_like_person_name(stripped):
-            buffer.append(stripped)
-            rows.append(" ".join(buffer).strip())
-            buffer = []
-        else:
-            if buffer and re.search(r"\d{4,}", stripped) and not _looks_like_person_name(stripped):
-                buffer.append(stripped)
-            elif buffer and len(buffer) == 1 and len(stripped.split()) <= 4 and not re.search(r"\d{4,}", stripped):
-                buffer.append(stripped)
-                rows.append(" ".join(buffer).strip())
-                buffer = []
-            else:
-                if buffer:
-                    rows.append(" ".join(buffer).strip())
-                    buffer = []
-                buffer.append(stripped)
+    refs = list(REFERENCE_RE.finditer(text))
+    if len(refs) > 1:
+        return [m.group(0) for m in refs]
 
-    if buffer:
-        rows.append(" ".join(buffer).strip())
-
-    # If the heuristic split produced only one row, use it as-is.
-    return [row for row in rows if row]
+    return [text]
 
 
-def parse_projects(pasted_text: str, gtsid: str) -> List[ParsedProject]:
-    """Parse one or more rows copied from AEM.
+def parse_record(record_text: str) -> ParsedRecord:
+    text = re.sub(r'\s+', ' ', record_text.replace('\t', ' ')).strip()
 
-    This version does not require a reference in the pasted text.
-    It uses the user-entered GTS ID and extracts the title from the first
-    meaningful cell while taking the owner from the last person-like cell.
-    """
-    gtsid_clean = gtsid.strip()
-    if not gtsid_clean:
-        return []
-
-    rows = _split_into_rows(pasted_text)
-    if not rows:
-        return []
-
-    projects: List[ParsedProject] = []
-    seen: set[tuple[str, str]] = set()
-
-    for row in rows:
-        cells = _split_row(row)
-        if not cells:
-            continue
-
-        title = _guess_title_from_cells(cells)
-        owner_name = _guess_owner_name_from_row(row, cells)
-        if not title or not owner_name:
-            continue
-
-        owner_token = normalize_owner_token(derive_owner_token(owner_name))
-        key = (title.lower(), owner_token.lower())
-        if key in seen:
-            continue
-        seen.add(key)
-
-        projects.append(
-            ParsedProject(
-                reference=title,
-                gtsid=gtsid_clean,
-                owner_token=owner_token,
-                title_raw=title,
-                source_system="AEM",
-                source_row=row,
-            )
+    ref_match = REFERENCE_RE.search(text)
+    if ref_match:
+        return ParsedRecord(
+            raw_text=record_text,
+            reference=ref_match.group(0),
+            title_raw=ref_match.group('title').strip(),
+            owner_name=_extract_owner(text),
         )
 
-    return projects
+    title = _extract_title(text)
+    owner = _extract_owner(text)
+    return ParsedRecord(raw_text=record_text, reference=None, title_raw=title, owner_name=owner)
+
+
+def _extract_title(text: str) -> str:
+    # Prefer content before the order id or before "View document(s)"
+    patterns = [
+        r'^(?P<title>.+?)\s+\d{5,}\s+View document\(s\)',
+        r'^(?P<title>.+?)\s+\d{5,}\s+Corporation\s+Thermo\s+Fisher',
+        r'^(?P<title>.+?)\s+\d{5,}\s+',
+    ]
+    for pattern in patterns:
+        m = re.search(pattern, text, re.IGNORECASE)
+        if m:
+            return m.group('title').strip()
+
+    # Fallback: use the leading chunk before common separators.
+    cut_tokens = [' View document(s) ', ' Thermo Fisher ', ' Corporation Thermo Fisher ']
+    for token in cut_tokens:
+        if token in text:
+            text = text.split(token, 1)[0].strip()
+    if ' ' in text:
+        first_line = text.split(' ', 1)[0].strip()
+        if first_line:
+            return first_line
+    return text.strip()
+
+
+def _extract_owner(text: str) -> str:
+    # Prefer the bit after the last "Thermo Fisher" marker.
+    m = re.search(r'Thermo\s+Fisher\s+(?P<owner>[A-Z][A-Za-z.-]+(?:\s+[A-Z][A-Za-z.-]+)+)\s*$', text)
+    if m:
+        return m.group('owner').strip()
+
+    m = re.search(r'Thermo\s+Fisher\s+(?P<owner>[A-Z][A-Za-z.-]+(?:\s+[A-Z][A-Za-z.-]+)+)', text)
+    if m:
+        return m.group('owner').strip()
+
+    # Last resort: last two tokens.
+    tokens = [t for t in re.split(r'\s+', text) if t]
+    if len(tokens) >= 2:
+        return f'{tokens[-2]} {tokens[-1]}'
+    if tokens:
+        return tokens[-1]
+    return ''
