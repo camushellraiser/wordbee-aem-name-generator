@@ -130,9 +130,13 @@ def style() -> None:
                 border-radius: 999px; font-weight: 800; padding: 0.55rem 0.9rem;
             }
             div[data-testid="stTextArea"] textarea {
-                min-height: 280px !important;
+                min-height: 300px !important;
                 font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
                 font-size: 0.94rem;
+            }
+            div[data-testid="stTextInput"] input {
+                font-size: 1rem;
+                font-weight: 700;
             }
         </style>
         """,
@@ -194,12 +198,12 @@ def main() -> None:
         """
         <div class="hero">
             <h1>🏷️ Wordbee Name</h1>
-            <p>Paste copied AEM rows once, then generate Wordbee names, AEM names, and AEM URLs in one clean Streamlit workflow.</p>
+            <p>Paste copied AEM rows, enter the GTS ID once, then generate Wordbee names, AEM names, and AEM URLs in one clean Streamlit workflow.</p>
             <div class="pill-row">
                 <span class="pill">Paste copied AEM rows</span>
+                <span class="pill">GTS ID field</span>
                 <span class="pill">Marketing → AEM + URLs</span>
                 <span class="pill">Product → Wordbee only</span>
-                <span class="pill">Multiple rows at once</span>
                 <span class="pill">Hard refresh reset</span>
             </div>
         </div>
@@ -223,12 +227,21 @@ def main() -> None:
         "Paste copied AEM content",
         placeholder=(
             "Example copied from AEM:\n"
-            "GTS260059_Web_PMantha_VDS-Avizo-Geology_AEM\t229137\tThermo Fisher Pratyusha Mantha\n"
-            "GTS260060_Web_ICao_Rainbow-NPI_AEM_PDP\t230815\tThermo Fisher Ivy Cao"
+            "Rainbow NPI_AEM_PDP\t230815\tView document(s)\tCorporation Thermo Fisher\tIvy Cao\n"
+            "VDS-Avizo-Geology\t229137\tView document(s)\tCorporation Thermo Fisher\tPratyusha Mantha"
         ),
         label_visibility="collapsed",
-        height=280,
+        height=300,
         key="pasted_text",
+    )
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">2. Input details</div>', unsafe_allow_html=True)
+    gts_id = st.text_input(
+        "GTS ID",
+        placeholder="GTS260059",
+        help="Enter the GTS number used in the generated names.",
     )
 
     request_types = st.multiselect(
@@ -254,53 +267,67 @@ def main() -> None:
             help="Multi-select supported.",
         )
 
+    generate = st.button("Generate", type="primary", use_container_width=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
-    parsed_projects = parse_projects(pasted_text)
-
-    if not pasted_text.strip():
+    if not generate:
         st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        st.markdown('<div class="section-title">2. Ready to parse</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">3. Ready to generate</div>', unsafe_allow_html=True)
         st.markdown(
-            '<div class="muted-box">Paste one or more copied AEM rows above. The tool will detect the reference automatically and use the copied row data to generate the naming outputs.</div>',
+            '<div class="muted-box">Paste a copied AEM row, enter the GTS ID, choose Marketing and/or Product, then click Generate.</div>',
             unsafe_allow_html=True,
         )
         st.markdown('</div>', unsafe_allow_html=True)
         return
 
+    if not gts_id.strip():
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">3. Missing GTS ID</div>', unsafe_allow_html=True)
+        st.warning("Please enter a GTS ID before generating names.")
+        st.markdown('</div>', unsafe_allow_html=True)
+        return
+
+    parsed_projects = parse_projects(pasted_text, gts_id)
+
+    if not pasted_text.strip():
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">3. Empty paste box</div>', unsafe_allow_html=True)
+        st.warning("Paste one or more copied AEM rows into the box above.")
+        st.markdown('</div>', unsafe_allow_html=True)
+        return
+
     if not parsed_projects:
         st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        st.markdown('<div class="section-title">2. No reference detected</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">3. Could not parse the pasted rows</div>', unsafe_allow_html=True)
         st.warning(
-            "I could not find a project reference in the pasted text. Paste the row that contains something like GTS260059_Web_PMantha_VDS-Avizo-Geology_AEM."
+            "I could not read a title and owner from the pasted text. Paste the copied AEM row that contains the project title and the person's name."
         )
         st.markdown('</div>', unsafe_allow_html=True)
         return
 
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
-    st.markdown('<div class="section-title">2. Parsed entries</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">3. Parsed entries</div>', unsafe_allow_html=True)
     st.markdown(
-        f'<div class="helper">Detected {len(parsed_projects)} reference' + ("s" if len(parsed_projects) != 1 else "") + ' from your paste.</div>',
+        f'<div class="helper">Detected {len(parsed_projects)} entr' + ("ies" if len(parsed_projects) != 1 else "y") + ' from your paste.</div>',
         unsafe_allow_html=True,
     )
     for idx, project in enumerate(parsed_projects, start=1):
-        with st.expander(f"Entry {idx}: {project.reference}", expanded=(len(parsed_projects) == 1)):
+        with st.expander(f"Entry {idx}: {project.title_raw}", expanded=(len(parsed_projects) == 1)):
             st.markdown(
                 f"""
                 <div class="chip-row">
                     <span class="chip">GTS ID: {html.escape(project.gtsid)}</span>
                     <span class="chip">Owner token: {html.escape(project.owner_token)}</span>
                     <span class="chip">Title: {html.escape(project.title_raw)}</span>
-                    <span class="chip">Source system: {html.escape(project.source_system)}</span>
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
-            copy_card("Detected reference", project.reference, secondary=True)
+            copy_card("Detected title", project.title_raw, secondary=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
-    st.markdown('<div class="section-title">3. Wordbee Name</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">4. Wordbee Name</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="helper">Marketing generates the AEM-suffixed Wordbee Name. Product generates the IRIS-suffixed Wordbee Name. If both are selected, both versions are shown.</div>',
         unsafe_allow_html=True,
@@ -309,7 +336,7 @@ def main() -> None:
     all_wordbee_names: List[str] = []
     for idx, project in enumerate(parsed_projects, start=1):
         st.markdown(
-            f'<div class="record-card"><div class="record-title">{html.escape(project.reference)}</div>',
+            f'<div class="record-card"><div class="record-title">Entry {idx}: {html.escape(project.title_raw)}</div>',
             unsafe_allow_html=True,
         )
         if marketing_selected:
@@ -328,7 +355,7 @@ def main() -> None:
 
     if marketing_selected:
         st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        st.markdown('<div class="section-title">4. AEM Name</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">5. AEM Name</div>', unsafe_allow_html=True)
         if country_labels:
             st.markdown(
                 f'<div class="helper">Countries selected: {render_flags(country_labels)}</div>',
@@ -340,7 +367,7 @@ def main() -> None:
             for idx, project in enumerate(parsed_projects, start=1):
                 with st.expander(f"Generate AEM outputs for entry {idx}", expanded=(len(parsed_projects) == 1)):
                     st.markdown(
-                        f'<div class="record-card"><div class="record-title">{html.escape(project.reference)}</div>',
+                        f'<div class="record-card"><div class="record-title">Entry {idx}: {html.escape(project.title_raw)}</div>',
                         unsafe_allow_html=True,
                     )
                     per_entry_names: List[str] = []
@@ -374,7 +401,7 @@ def main() -> None:
         st.markdown('</div>', unsafe_allow_html=True)
     elif product_selected:
         st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        st.markdown('<div class="section-title">4. AEM Name</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">5. AEM Name</div>', unsafe_allow_html=True)
         st.markdown(
             '<div class="muted-box">Product-only requests do not generate AEM Names or AEM URLs.</div>',
             unsafe_allow_html=True,

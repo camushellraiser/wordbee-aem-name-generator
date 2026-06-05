@@ -2,21 +2,29 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Sequence, Tuple
 
 BASE_URL = (
     "https://author-prod-use1.aemprod.thermofisher.net/"
     "projects/details.html/content/projects/"
 )
 
-# First column copied from AEM usually contains the reference.
-# We accept optional trailing source suffixes such as _PDP after AEM.
-REFERENCE_RE = re.compile(
-    r"(?P<gtsid>GTS\d+)_Web_(?P<owner_token>[A-Za-z][A-Za-z0-9]+)_(?P<title>.+?)_(?P<system>AEM|IRIS)(?P<suffixes>(?:_[A-Za-z0-9-]+)*)$",
-    re.IGNORECASE,
-)
-
 SPLIT_RE = re.compile(r"\t+|\s{2,}|\s*\|\s*")
+
+GENERIC_TOKENS = {
+    "view",
+    "document",
+    "documents",
+    "document(s)",
+    "corporation",
+    "thermo",
+    "fisher",
+    "thermo fisher",
+    "thermo fisher inc",
+    "thermo fisher scientific",
+    "n/a",
+    "na",
+}
 
 
 @dataclass(frozen=True)
@@ -25,8 +33,7 @@ class ParsedProject:
     gtsid: str
     owner_token: str
     title_raw: str
-    source_system: str
-    source_suffixes: str = ""
+    source_system: str = "AEM"
     source_row: str = ""
 
 
@@ -95,78 +102,151 @@ def _split_row(row: str) -> List[str]:
     return [piece.strip() for piece in SPLIT_RE.split(row) if piece.strip()]
 
 
-def _match_reference(text: str) -> Optional[re.Match[str]]:
-    text = text.strip()
+def _clean_cell(cell: str) -> str:
+    cell = re.sub(r"\s+", " ", cell).strip()
+    return cell
+
+
+def _looks_like_person_name(text: str) -> bool:
+    text = _clean_cell(text)
     if not text:
-        return None
-    return REFERENCE_RE.search(text)
+        return False
+    lower = text.lower()
+    if lower in GENERIC_TOKENS:
+        return False
+    if any(token in lower for token in ["thermo fisher", "view document", "order id", "reference"]):
+        return False
+    parts = re.findall(r"[A-Za-z]+", text)
+    return len(parts) >= 2 and len(parts) <= 4
 
 
-def _guess_owner_name_from_row(row: str, pieces: List[str]) -> Optional[str]:
-    # Prefer the last cell that looks like a person's full name.
-    candidates = [piece.strip() for piece in pieces if piece.strip()]
-    for candidate in reversed(candidates):
-        if len(re.findall(r"[A-Za-z]+", candidate)) >= 2 and "thermo fisher" not in candidate.lower():
-            return candidate
+def _guess_title_from_cells(cells: Sequence[str]) -> str:
+    for cell in cells:
+        cleaned = _clean_cell(cell)
+        if not cleaned:
+            continue
+        lower = cleaned.lower()
+        if lower in GENERIC_TOKENS:
+            continue
+        if lower.startswith("view document"):
+            continue
+        if lower.startswith("corporation"):
+            continue
+        if lower.startswith("thermo fisher"):
+            continue
+        if re.fullmatch(r"\d+", cleaned):
+            continue
+        return cleaned
+    return _clean_cell(cells[0]) if cells else ""
 
-    # Fallback: use the last two word-like tokens in the row.
+
+def _guess_owner_name_from_row(row: str, cells: Sequence[str]) -> Optional[str]:
+    candidates = [
+        _clean_cell(cell)
+        for cell in cells
+        if _looks_like_person_name(cell)
+    ]
+    if candidates:
+        return candidates[-1]
+
+    # Try the end of the row; this works well when the company name is followed by the person name.
+    trailing_patterns = [
+        r"([A-Z][a-z]+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s*$",
+        r"([A-Z][A-Za-z'-]+\s+[A-Z][A-Za-z'-]+(?:\s+[A-Z][A-Za-z'-]+)?)\s*$",
+    ]
+    for pattern in trailing_patterns:
+        matches = re.findall(pattern, row)
+        if matches:
+            return _clean_cell(matches[-1])
+
     tokens = re.findall(r"[A-Za-z]+", row)
     if len(tokens) >= 2:
         return f"{tokens[-2]} {tokens[-1]}"
     return None
 
 
-def parse_projects(pasted_text: str) -> List[ParsedProject]:
-    """Parse one or more rows copied from AEM.
-
-    Works with text copied as:
-      - tab separated cells
-      - pipe separated cells
-      - wrapped row text with line breaks
-      - multiple selected rows pasted together
-    """
+def _split_into_rows(pasted_text: str) -> List[str]:
     text = pasted_text.replace("\r\n", "\n").replace("\r", "\n").strip()
     if not text:
         return []
 
-    row_candidates = [line.strip() for line in text.split("\n") if line.strip()]
+    raw_lines = [line.rstrip() for line in text.split("\n")]
+    rows: List[str] = []
+    buffer: List[str] = []
+
+    for line in raw_lines:
+        stripped = line.strip()
+        if not stripped:
+            if buffer:
+                rows.append(" ".join(buffer).strip())
+                buffer = []
+            continue
+        # Keep likely wrapped lines together.
+        if buffer and _looks_like_person_name(stripped):
+            buffer.append(stripped)
+            rows.append(" ".join(buffer).strip())
+            buffer = []
+        else:
+            if buffer and re.search(r"\d{4,}", stripped) and not _looks_like_person_name(stripped):
+                buffer.append(stripped)
+            elif buffer and len(buffer) == 1 and len(stripped.split()) <= 4 and not re.search(r"\d{4,}", stripped):
+                buffer.append(stripped)
+                rows.append(" ".join(buffer).strip())
+                buffer = []
+            else:
+                if buffer:
+                    rows.append(" ".join(buffer).strip())
+                    buffer = []
+                buffer.append(stripped)
+
+    if buffer:
+        rows.append(" ".join(buffer).strip())
+
+    # If the heuristic split produced only one row, use it as-is.
+    return [row for row in rows if row]
+
+
+def parse_projects(pasted_text: str, gtsid: str) -> List[ParsedProject]:
+    """Parse one or more rows copied from AEM.
+
+    This version does not require a reference in the pasted text.
+    It uses the user-entered GTS ID and extracts the title from the first
+    meaningful cell while taking the owner from the last person-like cell.
+    """
+    gtsid_clean = gtsid.strip()
+    if not gtsid_clean:
+        return []
+
+    rows = _split_into_rows(pasted_text)
+    if not rows:
+        return []
+
     projects: List[ParsedProject] = []
-    seen_refs: set[str] = set()
+    seen: set[tuple[str, str]] = set()
 
-    for row in row_candidates:
-        pieces = _split_row(row)
-        # First try the first visible cell, since copied AEM rows generally put the reference first.
-        first_cell = pieces[0] if pieces else row
-        reference_match = _match_reference(first_cell)
-        if not reference_match:
-            reference_match = _match_reference(row)
-        if not reference_match:
+    for row in rows:
+        cells = _split_row(row)
+        if not cells:
             continue
 
-        gtsid = reference_match.group("gtsid")
-        owner_token = reference_match.group("owner_token")
-        title_raw = reference_match.group("title")
-        source_system = reference_match.group("system").upper()
-        source_suffixes = reference_match.group("suffixes") or ""
-
-        if not owner_token or owner_token.lower() in {"web", "aem", "iris"}:
-            owner_name = _guess_owner_name_from_row(row, pieces)
-            if owner_name:
-                owner_token = derive_owner_token(owner_name)
-
-        reference = reference_match.group(0).strip()
-        if reference in seen_refs:
+        title = _guess_title_from_cells(cells)
+        owner_name = _guess_owner_name_from_row(row, cells)
+        if not title or not owner_name:
             continue
-        seen_refs.add(reference)
+
+        owner_token = normalize_owner_token(derive_owner_token(owner_name))
+        key = (title.lower(), owner_token.lower())
+        if key in seen:
+            continue
+        seen.add(key)
 
         projects.append(
             ParsedProject(
-                reference=reference,
-                gtsid=gtsid,
-                owner_token=normalize_owner_token(owner_token),
-                title_raw=title_raw.strip(),
-                source_system=source_system,
-                source_suffixes=source_suffixes,
+                reference=title,
+                gtsid=gtsid_clean,
+                owner_token=owner_token,
+                title_raw=title,
+                source_system="AEM",
                 source_row=row,
             )
         )
